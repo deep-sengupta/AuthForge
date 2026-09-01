@@ -1,0 +1,41 @@
+# AuthForge 
+source: burp_file.xml
+
+# Safe default: discover actors/roles/tenants from captured auth material when possible.
+autoDiscoverActors: true
+
+# Safe default: plan only. Add --execute (or executeTests: true) to perform live probes.
+executeTests: false
+
+# Mutating probes remain blocked unless allowMutations is explicitly enabled.
+allowMutations: false
+verifySideEffects: false
+
+# Optional explicit actors. Leave empty to use auto-discovery from Burp traffic.
+# actors:
+#   - name: alice
+#     role: user
+#     user: alice
+#     tenant: tenant-a
+#     headers:
+#       Authorization: "Bearer ALICE_TOKEN"
+
+filterMimeTypes:
+  - JSON
+  - XML
+  - JSON; charset=utf-8
+
+headers:
+  - User-Agent: "AuthForge/"
+
+# Optional domain-specific object ID regexes.
+objectPatterns:
+  - '(?i)invoice_[0-9]+'
+  - '(?i)acct-[A-Z0-9-]+'
+
+denyStatuses: [401, 403, 404]
+
+baselineFile: authforge-baseline.json
+reportFile: authforge-report.html
+maxMutations: 30
+timeout: 8s
