@@ -1,0 +1,10 @@
+dev/
+*.xml
+*.yaml
+*.csv
+*.txt
+*.exe
+
+.DS_Store
+
+**/.DS_Store
