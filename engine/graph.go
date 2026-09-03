@@ -52,7 +52,7 @@ func BuildGraph(obs []Observation) AuthorizationGraph {
 }
 
 func safe(s string) string {
-	return strings.NewReplacer("\"", "'", "\n", " ", "\r", " ").Replace(s)
+	return strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", " ", "\r", " ").Replace(s)
 }
 
 func edgeKey(base, relation string, allowed *bool) string {
