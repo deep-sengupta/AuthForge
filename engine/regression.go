@@ -68,8 +68,7 @@ func CompareBaseline(base RegressionBaseline, current []Observation) []Finding {
 			}
 		}
 	}
-	_, findings := dedupeFindings(nil, out)
-	return findings
+	return dedupeFindings(out)
 }
 
 func invariantKey(o Observation, object string) string {
