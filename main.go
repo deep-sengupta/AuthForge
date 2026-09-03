@@ -76,4 +76,4 @@ func main() {
 		os.Exit(2)
 	}
 }
-func writeFile(p string, b []byte) error { return os.WriteFile(p, b, 0644) }
+func writeFile(p string, b []byte) error { return os.WriteFile(p, b, 0600) }
