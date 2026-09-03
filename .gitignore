@@ -3,6 +3,10 @@ dev/
 *.csv
 *.txt
 *.exe
+authforge-report.json
+authforge-report.html
+authforge-graph.dot
+authforge-baseline.json
 
 .DS_Store
 

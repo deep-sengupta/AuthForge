@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
+	"sync"
 )
 
 var (
@@ -13,6 +13,7 @@ var (
 	jwtRe     = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
 	namedIDRe = regexp.MustCompile(`(?i)(id|uid|user[_-]?id|account[_-]?id|tenant[_-]?id|object[_-]?id|order[_-]?id|item[_-]?id|invoice[_-]?id|project[_-]?id)[=:/_-]([A-Za-z0-9_-]{1,80})`)
 	numRe     = regexp.MustCompile(`\b[0-9]{1,12}\b`)
+	customRegexCache sync.Map
 )
 
 func DiscoverObjects(rawURL, body string, custom []string) []ObjectRef {
@@ -61,13 +62,27 @@ func DiscoverObjects(rawURL, body string, custom []string) []ObjectRef {
 		}
 	}
 	for _, p := range custom {
-		if r, err := regexp.Compile(p); err == nil {
-			for _, v := range r.FindAllString(rawURL+"\n"+body, -1) {
-				add(ObjectRef{Kind: "custom", Value: v, Source: p, Location: "custom", Confidence: 94})
-			}
+		r := cachedCustomRegex(p)
+		if r == nil {
+			continue
+		}
+		for _, v := range r.FindAllString(rawURL+"\n"+body, -1) {
+			add(ObjectRef{Kind: "custom", Value: v, Source: p, Location: "custom", Confidence: 94})
 		}
 	}
 	return refs
+}
+
+func cachedCustomRegex(pattern string) *regexp.Regexp {
+	if v, ok := customRegexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	r, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	actual, _ := customRegexCache.LoadOrStore(pattern, r)
+	return actual.(*regexp.Regexp)
 }
 
 func objectLikeNumeric(s, value string) bool {
@@ -120,13 +135,4 @@ func CanonicalObjectKind(kind string) string {
 		return "named-id"
 	}
 	return kind
-}
-
-func allDigits(s string) bool {
-	for _, r := range s {
-		if !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return s != ""
 }

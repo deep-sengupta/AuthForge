@@ -44,7 +44,7 @@ type Observation struct {
 	Allowed     *bool               `json:"allowed,omitempty"`
 	Evidence    string              `json:"evidence,omitempty"`
 	Timestamp   time.Time           `json:"timestamp"`
-	RequestBody string              `json:"request_body,omitempty"`
+	RequestBody string              `json:"-"`
 }
 
 type TestKind string

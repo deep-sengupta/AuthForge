@@ -249,7 +249,6 @@ func PlanTests(prepared []preparedRequest, obs []Observation, learned []learnedO
 					continue
 				}
 				for _, ref := range p.Refs {
-
 					for _, candidate := range observedByEndpoint[EndpointSignature(p.Req.Method, p.Req.URL, p.Refs)] {
 						if candidate.Actor.Name == src.Name || candidate.Kind != CanonicalObjectKind(ref.Kind) || candidate.Value == ref.Value {
 							continue
@@ -302,11 +301,9 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 
 		probeValue := tc.TargetObject
 		mutated := replaceValue(p.Req, tc.SourceObject, probeValue)
-
 		if tc.Kind == TestCrossObject || tc.Kind == TestCrossTenant {
 			mutated = replaceValue(p.Req, tc.SourceObject, tc.SourceObject)
 		}
-
 		if isMutating(tc.Method) && !opt.AllowMutations {
 			continue
 		}
@@ -322,10 +319,8 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		baselineDenied := originalOK && originalTarget.Observation.Allowed != nil && !*originalTarget.Observation.Allowed
 		verified := false
 		if tc.Kind == TestCrossObject || tc.Kind == TestCrossTenant {
-
 			verified = controlAllowed && sourceDeniedControl && allowed && sim >= 0.70
 		}
-
 		if !allowed {
 			continue
 		}
@@ -380,13 +375,11 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		}
 		findings = append(findings, f)
 	}
-	_, out := dedupeFindings(nil, findings)
-	return out
+	return dedupeFindings(findings)
 }
 
 func verifySideEffect(client Client, r Request, actor Actor, cfg Config) SideEffectEvidence {
 	ev := SideEffectEvidence{Attempted: true}
-
 	before := r
 	before.Method = http.MethodGet
 	beforeFP, beforeBody, _, e1 := client.Do(applyActor(withGlobalHeaders(before, cfg.GlobalHeaders), actor))
@@ -422,13 +415,11 @@ func isMutating(m string) bool {
 }
 
 func findPrepared(prepared []preparedRequest, endpoint, urlStr, method string) (preparedRequest, bool) {
-
 	for _, p := range prepared {
 		if p.Req.Method == method && p.Req.URL == urlStr {
 			return p, true
 		}
 	}
-
 	for _, p := range prepared {
 		if p.Req.Method == method && EndpointSignature(p.Req.Method, p.Req.URL, p.Refs) == endpoint {
 			return p, true
@@ -464,7 +455,6 @@ func EndpointSignature(method, u string, refs []ObjectRef) string {
 	if path == "" {
 		path = "/"
 	}
-
 	parts := strings.Split(path, "/")
 	for i, p := range parts {
 		if p == "" {
@@ -481,11 +471,9 @@ func looksLikeObjectToken(s string) bool {
 	if _, err := url.PathUnescape(s); err == nil {
 		s, _ = url.PathUnescape(s)
 	}
-	if uuidRe.MatchString(s) || numToken(s) || strings.Contains(strings.ToLower(s), "id-") {
-		return true
-	}
-	return false
+	return uuidRe.MatchString(s) || numToken(s) || strings.Contains(strings.ToLower(s), "id-")
 }
+
 func numToken(s string) bool {
 	if s == "" {
 		return false
@@ -497,6 +485,7 @@ func numToken(s string) bool {
 	}
 	return len(s) <= 16
 }
+
 func similarityBonus(x float64) int {
 	if x >= 0.9 {
 		return 3
@@ -506,6 +495,7 @@ func similarityBonus(x float64) int {
 	}
 	return 0
 }
+
 func clampPercent(x int) int {
 	if x > 99 {
 		return 99
@@ -516,7 +506,7 @@ func clampPercent(x int) int {
 	return x
 }
 
-func dedupeFindings(_ []Observation, fs []Finding) ([]Observation, []Finding) {
+func dedupeFindings(fs []Finding) []Finding {
 	seen := map[string]bool{}
 	out := fs[:0]
 	for _, f := range fs {
@@ -526,7 +516,7 @@ func dedupeFindings(_ []Observation, fs []Finding) ([]Observation, []Finding) {
 			out = append(out, f)
 		}
 	}
-	return nil, out
+	return out
 }
 
 func parseBurpRequest(item BurpItem) (Request, bool) {
@@ -560,6 +550,7 @@ func parseBurpRequest(item BurpItem) (Request, bool) {
 	}
 	return Request{URL: u, Method: parts[0], Body: body, Headers: headers}, true
 }
+
 func withGlobalHeaders(r Request, groups []map[string]string) Request {
 	h := map[string]string{}
 	for k, v := range r.Headers {
@@ -573,6 +564,7 @@ func withGlobalHeaders(r Request, groups []map[string]string) Request {
 	r.Headers = h
 	return r
 }
+
 func applyActor(r Request, a Actor) Request {
 	h := map[string]string{}
 	for k, v := range r.Headers {
@@ -587,12 +579,15 @@ func applyActor(r Request, a Actor) Request {
 	r.Headers = h
 	return r
 }
+
 func replaceValue(r Request, from, to string) Request {
 	r.URL = strings.ReplaceAll(r.URL, from, to)
 	r.Body = strings.ReplaceAll(r.Body, from, to)
 	return r
 }
+
 func replaceInURL(u, from, to string) string { return strings.ReplaceAll(u, from, to) }
+
 func mimeAllowed(m string, filters []string) bool {
 	if len(filters) == 0 {
 		return true
@@ -604,6 +599,7 @@ func mimeAllowed(m string, filters []string) bool {
 	}
 	return false
 }
+
 func inferAllowed(fp ResponseFingerprint, denies []int) bool {
 	for _, d := range denies {
 		if fp.Status == d {
@@ -612,6 +608,7 @@ func inferAllowed(fp ResponseFingerprint, denies []int) bool {
 	}
 	return fp.Status >= 200 && fp.Status < 400
 }
+
 func InferAction(method, u string) string {
 	switch strings.ToUpper(method) {
 	case http.MethodGet:
@@ -629,6 +626,7 @@ func InferAction(method, u string) string {
 	}
 	return "request"
 }
+
 func writeJSON(path string, v any) error {
 	d := filepath.Dir(path)
 	if d != "." {
@@ -640,66 +638,13 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0644)
+	return os.WriteFile(path, b, 0600)
 }
+
 func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return fmt.Sprintf("finding-%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("%x", b)
-}
-
-func boolInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
-
-func collectCapturedBaseline(prepared []preparedRequest, actors []Actor, cfg Config) ([]Observation, map[string]accessRecord) {
-	obs := make([]Observation, 0, len(prepared)*len(actors))
-	access := map[string]accessRecord{}
-	for _, p := range prepared {
-		if !mimeAllowed(p.Item.Mimetype, cfg.FilterMimeTypes) {
-			continue
-		}
-		rawResp, _ := DecodeBurpRequest(p.Item.Response)
-		body := rawResp
-		if body == "" {
-			body = p.Item.Response
-		}
-		status := p.Item.Status
-		if status == 0 {
-			status = 200
-		}
-		fp := capturedFingerprint(status, body)
-		actor := matchCapturedActor(p.Req.Headers, actors)
-		if actor.Name == "" {
-			continue
-		}
-		allowed := inferAllowed(fp, cfg.DenyStatuses)
-		o := Observation{Actor: actor, URL: p.Req.URL, Endpoint: EndpointSignature(p.Req.Method, p.Req.URL, p.Refs), Method: p.Req.Method, Action: InferAction(p.Req.Method, p.Req.URL), Objects: p.Refs, Fingerprint: fp, Allowed: &allowed, Timestamp: time.Now().UTC(), RequestBody: p.Req.Body, Evidence: "offline plan mode: observation derived from Burp capture"}
-		obs = append(obs, o)
-		access[accessKey(actor.Name, o.Endpoint, p.Refs)] = accessRecord{Observation: o, Body: body}
-	}
-	return obs, access
-}
-
-func matchCapturedActor(h map[string]string, actors []Actor) Actor {
-	for _, a := range actors {
-		for k, v := range a.Headers {
-			for hk, hv := range h {
-				if strings.EqualFold(k, hk) && v == hv {
-					return a
-				}
-			}
-		}
-	}
-	return Actor{}
-}
-
-func capturedFingerprint(status int, body string) ResponseFingerprint {
-	h := make(http.Header)
-	return FingerprintBytes(status, h, nil, 0, []byte(body))
 }
