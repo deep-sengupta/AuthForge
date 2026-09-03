@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,14 @@ type Client struct {
 	InsecureTLS bool
 }
 
+type clientKey struct {
+	timeout     time.Duration
+	proxy       string
+	insecureTLS bool
+}
+
+var httpClients sync.Map
+
 func (c Client) Do(r Request) (ResponseFingerprint, string, map[string]string, error) {
 	req, err := http.NewRequest(r.Method, r.URL, bytes.NewBufferString(r.Body))
 	if err != nil {
@@ -43,18 +52,7 @@ func (c Client) Do(r Request) (ResponseFingerprint, string, map[string]string, e
 	for k, v := range r.Headers {
 		req.Header.Set(k, v)
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.InsecureTLS}}
-	if c.Proxy != "" {
-		if u, e := url.Parse(c.Proxy); e == nil {
-			transport.Proxy = http.ProxyURL(u)
-		}
-	}
-	client := &http.Client{Transport: transport, Timeout: c.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 4 {
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}}
+	client := c.sharedClient()
 	start := time.Now()
 	resp, err := client.Do(req)
 	dur := time.Since(start)
@@ -71,6 +69,32 @@ func (c Client) Do(r Request) (ResponseFingerprint, string, map[string]string, e
 		}
 	}
 	return fp, string(body), headers, nil
+}
+
+func (c Client) sharedClient() *http.Client {
+	key := clientKey{timeout: c.Timeout, proxy: c.Proxy, insecureTLS: c.InsecureTLS}
+	if v, ok := httpClients.Load(key); ok {
+		return v.(*http.Client)
+	}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: c.InsecureTLS},
+		IdleConnTimeout:   90 * time.Second,
+		MaxIdleConns:      100,
+		MaxIdleConnsPerHost: 20,
+	}
+	if c.Proxy != "" {
+		if u, e := url.Parse(c.Proxy); e == nil {
+			transport.Proxy = http.ProxyURL(u)
+		}
+	}
+	client := &http.Client{Transport: transport, Timeout: c.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 4 {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}}
+	actual, _ := httpClients.LoadOrStore(key, client)
+	return actual.(*http.Client)
 }
 
 func Fingerprint(resp *http.Response, dur int, body []byte) ResponseFingerprint {
