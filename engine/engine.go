@@ -83,7 +83,7 @@ func Run(items []BurpItem, cfg Config, opt Options) (Result, error) {
 	var observations []Observation
 	var access map[string]accessRecord
 	if opt.ExecuteTests {
-		observations, access = collectBaseline(prepared, cfg, actors, client, opt.Threads)
+		observations, access = collectBaseline(prepared, cfg, actors, client, opt.Threads, opt.AllowMutations)
 	} else {
 		observations, access = collectCapturedBaseline(prepared, actors, cfg)
 	}
@@ -161,7 +161,7 @@ func prepareRequests(items []BurpItem, cfg Config, opt Options) []preparedReques
 	return out
 }
 
-func collectBaseline(prepared []preparedRequest, cfg Config, actors []Actor, client Client, threads int) ([]Observation, map[string]accessRecord) {
+func collectBaseline(prepared []preparedRequest, cfg Config, actors []Actor, client Client, threads int, allowMutations bool) ([]Observation, map[string]accessRecord) {
 	var mu sync.Mutex
 	obs := make([]Observation, 0)
 	access := map[string]accessRecord{}
@@ -171,6 +171,9 @@ func collectBaseline(prepared []preparedRequest, cfg Config, actors []Actor, cli
 		defer wg.Done()
 		for idx := range jobs {
 			p := prepared[idx]
+			if isMutating(p.Req.Method) && !allowMutations {
+				continue
+			}
 			for _, actor := range actors {
 				r := applyActor(withGlobalHeaders(p.Req, cfg.GlobalHeaders), actor)
 				fp, body, _, err := client.Do(r)
