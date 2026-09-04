@@ -236,6 +236,9 @@ func learnObjects(obs []Observation, access map[string]accessRecord) []learnedOb
 }
 
 func PlanTests(prepared []preparedRequest, obs []Observation, learned []learnedObject, actors []Actor, maxMutations int) []TestCase {
+	if maxMutations < 1 {
+		maxMutations = 1
+	}
 	observedByEndpoint := map[string][]learnedObject{}
 	for _, l := range learned {
 		observedByEndpoint[l.Endpoint] = append(observedByEndpoint[l.Endpoint], l)
@@ -581,9 +584,157 @@ func applyActor(r Request, a Actor) Request {
 }
 
 func replaceValue(r Request, from, to string) Request {
-	r.URL = strings.ReplaceAll(r.URL, from, to)
-	r.Body = strings.ReplaceAll(r.Body, from, to)
+	if from == "" || from == to {
+		return r
+	}
+	if u, err := url.Parse(r.URL); err == nil {
+		if u.Path != "" {
+			parts := strings.Split(u.Path, "/")
+			replaced := false
+			for i, part := range parts {
+				if part == from {
+					parts[i] = to
+					replaced = true
+					break
+				}
+			}
+			if replaced {
+				u.Path = strings.Join(parts, "/")
+				u.RawPath = ""
+				r.URL = u.String()
+				return r
+			}
+		}
+		values := u.Query()
+		queryReplaced := false
+		for key, vals := range values {
+			if !isObjectParameter(key) {
+				continue
+			}
+			for i, value := range vals {
+				if value == from {
+					vals[i] = to
+					queryReplaced = true
+					break
+				}
+			}
+			if queryReplaced {
+				values[key] = vals
+				break
+			}
+		}
+		if queryReplaced {
+			u.RawQuery = values.Encode()
+			r.URL = u.String()
+			return r
+		}
+	}
+	if replaced := replaceBodyObject(r.Body, from, to); replaced != r.Body {
+		r.Body = replaced
+		return r
+	}
 	return r
+}
+
+func isObjectParameter(key string) bool {
+	l := strings.ToLower(key)
+	for _, token := range []string{"id", "uid", "user", "account", "tenant", "order", "item", "invoice", "project", "object"} {
+		if strings.Contains(l, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func replaceBodyObject(body, from, to string) string {
+	if strings.TrimSpace(body) == "" {
+		return body
+	}
+	var v any
+	if json.Unmarshal([]byte(body), &v) == nil {
+		replaced, changed := replaceJSONValue(v, from, to)
+		if changed {
+			b, err := json.Marshal(replaced)
+			if err == nil {
+				return string(b)
+			}
+		}
+		return body
+	}
+	values, err := url.ParseQuery(body)
+	if err == nil && len(values) > 0 {
+		changed := false
+		for key, vals := range values {
+			if !isObjectParameter(key) {
+				continue
+			}
+			for i, value := range vals {
+				if value == from {
+					vals[i] = to
+					changed = true
+				}
+			}
+			values[key] = vals
+		}
+		if changed {
+			return values.Encode()
+		}
+	}
+	return body
+}
+
+func replaceJSONValue(v any, from, to string) (any, bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		changed := false
+		for key, value := range x {
+			if isObjectParameter(key) {
+				switch candidate := value.(type) {
+				case string:
+					if candidate == from {
+						x[key] = to
+						changed = true
+						continue
+					}
+				case float64:
+					if candidate == float64(parseNumeric(from)) {
+						x[key] = parseNumeric(to)
+						changed = true
+						continue
+					}
+				}
+			}
+			next, nextChanged := replaceJSONValue(value, from, to)
+			if nextChanged {
+				x[key] = next
+				changed = true
+			}
+		}
+		return x, changed
+	case []any:
+		changed := false
+		for i, item := range x {
+			next, nextChanged := replaceJSONValue(item, from, to)
+			if nextChanged {
+				x[i] = next
+				changed = true
+			}
+		}
+		return x, changed
+	default:
+		return v, false
+	}
+}
+
+func parseNumeric(s string) float64 {
+	n := 0.0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return -1
+		}
+		n = n*10 + float64(r-'0')
+	}
+	return n
 }
 
 func replaceInURL(u, from, to string) string { return strings.ReplaceAll(u, from, to) }
