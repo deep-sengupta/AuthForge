@@ -315,6 +315,18 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		if isMutating(tc.Method) && !opt.AllowMutations {
 			continue
 		}
+
+		var beforeFP ResponseFingerprint
+		var beforeBody string
+		haveBefore := false
+		if opt.VerifySideEffects && opt.AllowMutations && opt.ExecuteTests && isMutating(tc.Method) {
+			before := mutated
+			before.Method = http.MethodGet
+			var beforeErr error
+			beforeFP, beforeBody, _, beforeErr = client.Do(applyActor(withGlobalHeaders(before, cfg.GlobalHeaders), tc.TargetActor))
+			haveBefore = beforeErr == nil
+		}
+
 		fp, body, _, err := client.Do(applyActor(withGlobalHeaders(mutated, cfg.GlobalHeaders), tc.TargetActor))
 		if err != nil {
 			continue
@@ -376,7 +388,11 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		chain = append(chain, fmt.Sprintf("%s → replays owner's object %s → %s", tc.TargetActor.Name, tc.SourceObject, map[bool]string{true: "authorization bypass VERIFIED", false: "suspicious access"}[verified]))
 		f := Finding{ID: newID(), Type: typ, Severity: sev, Confidence: clampPercent(conf + similarityBonus(sim)), Verified: verified, Title: map[bool]string{true: "Verified unauthorized object access", false: "Potential authorization boundary weakness"}[verified], Summary: fmt.Sprintf("%s accessed object %s using an authorization context associated with %s.", tc.TargetActor.Name, tc.SourceObject, tc.SourceActor.Name), URL: tc.URL, Endpoint: tc.Endpoint, Method: tc.Method, SourceActor: tc.SourceActor, TargetActor: tc.TargetActor, SourceObject: tc.SourceObject, MutatedObject: probeValue, Evidence: evidence, ExploitChain: chain, Recommendations: []string{"Enforce object ownership checks at the service/data layer", "Enforce tenant isolation before reads and writes", "Keep this exact actor/object relationship in authorization regression coverage"}, TestCaseID: tc.ID}
 		if opt.VerifySideEffects && opt.AllowMutations && opt.ExecuteTests && verified && isMutating(tc.Method) {
-			f.SideEffect = verifySideEffect(client, mutated, tc.TargetActor, cfg)
+			if haveBefore {
+				f.SideEffect = verifySideEffect(client, mutated, tc.TargetActor, cfg, beforeFP, beforeBody, fp)
+			} else {
+				f.SideEffect.Attempted = true
+			}
 			if f.SideEffect.Verified {
 				f.Confidence = clampPercent(f.Confidence + 2)
 			}
@@ -386,25 +402,12 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 	return dedupeFindings(findings)
 }
 
-func verifySideEffect(client Client, r Request, actor Actor, cfg Config) SideEffectEvidence {
-	ev := SideEffectEvidence{Attempted: true}
-	before := r
-	before.Method = http.MethodGet
-	beforeFP, beforeBody, _, e1 := client.Do(applyActor(withGlobalHeaders(before, cfg.GlobalHeaders), actor))
-	if e1 != nil {
-		return ev
-	}
-	ev.BeforeStatus = beforeFP.Status
-	ev.BeforeHash = beforeFP.BodyHash
-	ev.VerificationURL = before.URL
-	mutFP, _, _, e2 := client.Do(applyActor(withGlobalHeaders(r, cfg.GlobalHeaders), actor))
-	if e2 != nil {
-		return ev
-	}
+func verifySideEffect(client Client, r Request, actor Actor, cfg Config, beforeFP ResponseFingerprint, beforeBody string, mutFP ResponseFingerprint) SideEffectEvidence {
+	ev := SideEffectEvidence{Attempted: true, BeforeStatus: beforeFP.Status, BeforeHash: beforeFP.BodyHash, VerificationURL: r.URL}
 	after := r
 	after.Method = http.MethodGet
-	afterFP, afterBody, _, e3 := client.Do(applyActor(withGlobalHeaders(after, cfg.GlobalHeaders), actor))
-	if e3 != nil {
+	afterFP, afterBody, _, e := client.Do(applyActor(withGlobalHeaders(after, cfg.GlobalHeaders), actor))
+	if e != nil {
 		return ev
 	}
 	ev.AfterStatus = afterFP.Status
