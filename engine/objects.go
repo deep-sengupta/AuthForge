@@ -9,10 +9,9 @@ import (
 )
 
 var (
-	uuidRe    = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b`)
-	jwtRe     = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
-	namedIDRe = regexp.MustCompile(`(?i)(id|uid|user[_-]?id|account[_-]?id|tenant[_-]?id|object[_-]?id|order[_-]?id|item[_-]?id|invoice[_-]?id|project[_-]?id)[=:/_-]([A-Za-z0-9_-]{1,80})`)
-	numRe     = regexp.MustCompile(`\b[0-9]{1,12}\b`)
+	uuidRe           = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b`)
+	namedIDRe        = regexp.MustCompile(`(?i)(id|uid|user[_-]?id|account[_-]?id|tenant[_-]?id|object[_-]?id|order[_-]?id|item[_-]?id|invoice[_-]?id|project[_-]?id)[=:/_-]([A-Za-z0-9_-]{1,80})`)
+	numRe            = regexp.MustCompile(`\b[0-9]{1,12}\b`)
 	customRegexCache sync.Map
 )
 
@@ -33,9 +32,6 @@ func DiscoverObjects(rawURL, body string, custom []string) []ObjectRef {
 	}
 	for _, v := range uuidRe.FindAllString(body, -1) {
 		add(ObjectRef{Kind: "uuid", Value: v, Source: "body", Location: "body", Confidence: 96})
-	}
-	for _, v := range jwtRe.FindAllString(body, -1) {
-		add(ObjectRef{Kind: "jwt", Value: v, Source: "body", Location: "body", Confidence: 35})
 	}
 	for _, m := range namedIDRe.FindAllStringSubmatch(rawURL+"\n"+body, -1) {
 		if len(m) != 3 {
