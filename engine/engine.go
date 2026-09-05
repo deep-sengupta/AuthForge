@@ -125,7 +125,9 @@ func Run(items []BurpItem, cfg Config, opt Options) (Result, error) {
 			if err := writeJSON(opt.BaselinePath, b); err != nil {
 				return Result{}, err
 			}
-		} else if statErr == nil {
+		} else if statErr != nil {
+			return Result{}, statErr
+		} else {
 			old, err := LoadBaseline(opt.BaselinePath)
 			if err != nil {
 				return Result{}, err
@@ -435,7 +437,13 @@ func findPrepared(prepared []preparedRequest, endpoint, urlStr, method string) (
 }
 
 func findReferenceAccess(tc TestCase, access map[string]accessRecord, actor Actor, endpoint, object string) (accessRecord, bool) {
-	for k, v := range access {
+	keys := make([]string, 0, len(access))
+	for k := range access {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := access[k]
 		if !strings.HasPrefix(k, actor.Name+"|"+endpoint+"|") {
 			continue
 		}
@@ -593,20 +601,14 @@ func replaceValue(r Request, from, to string) Request {
 	if u, err := url.Parse(r.URL); err == nil {
 		if u.Path != "" {
 			parts := strings.Split(u.Path, "/")
-			replaced := false
 			for i, part := range parts {
 				if part == from {
 					parts[i] = to
-					replaced = true
-					break
 				}
 			}
-			if replaced {
-				u.Path = strings.Join(parts, "/")
-				u.RawPath = ""
-				r.URL = u.String()
-				return r
-			}
+			u.Path = strings.Join(parts, "/")
+			u.RawPath = ""
+			r.URL = u.String()
 		}
 		values := u.Query()
 		queryReplaced := false
@@ -614,27 +616,25 @@ func replaceValue(r Request, from, to string) Request {
 			if !isObjectParameter(key) {
 				continue
 			}
+			changed := false
 			for i, value := range vals {
 				if value == from {
 					vals[i] = to
-					queryReplaced = true
-					break
+					changed = true
 				}
 			}
-			if queryReplaced {
+			if changed {
+				queryReplaced = true
 				values[key] = vals
-				break
 			}
 		}
 		if queryReplaced {
 			u.RawQuery = values.Encode()
 			r.URL = u.String()
-			return r
 		}
 	}
 	if replaced := replaceBodyObject(r.Body, from, to); replaced != r.Body {
 		r.Body = replaced
-		return r
 	}
 	return r
 }
@@ -700,10 +700,12 @@ func replaceJSONValue(v any, from, to string) (any, bool) {
 						continue
 					}
 				case float64:
-					if candidate == float64(parseNumeric(from)) {
-						x[key] = parseNumeric(to)
-						changed = true
-						continue
+					if parsedFrom, ok := parseNumeric(from); ok && candidate == parsedFrom {
+						if parsedTo, ok := parseNumeric(to); ok {
+							x[key] = parsedTo
+							changed = true
+							continue
+						}
 					}
 				}
 			}
@@ -729,18 +731,19 @@ func replaceJSONValue(v any, from, to string) (any, bool) {
 	}
 }
 
-func parseNumeric(s string) float64 {
+func parseNumeric(s string) (float64, bool) {
+	if s == "" {
+		return 0, false
+	}
 	n := 0.0
 	for _, r := range s {
 		if r < '0' || r > '9' {
-			return -1
+			return 0, false
 		}
 		n = n*10 + float64(r-'0')
 	}
-	return n
+	return n, true
 }
-
-func replaceInURL(u, from, to string) string { return strings.ReplaceAll(u, from, to) }
 
 func mimeAllowed(m string, filters []string) bool {
 	if len(filters) == 0 {
