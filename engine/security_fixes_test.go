@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -30,8 +31,30 @@ func TestReplaceValueTargetsObjectFieldsInJSON(t *testing.T) {
 		Body: `{"order_id":42,"page":42,"nested":{"user_id":42},"note":"order 42"}`,
 	}
 	got := replaceValue(req, "42", "99")
-	want := `{"order_id":99,"page":42,"nested":{"user_id":99},"note":"order 42"}`
-	if got.Body != want {
+	wantURL := "https://api.example.com/orders/99"
+	wantBody := `{"order_id":99,"page":42,"nested":{"user_id":99},"note":"order 42"}`
+	if got.URL != wantURL {
+		t.Fatalf("unexpected mutated URL: %s", got.URL)
+	}
+	if got.Body != wantBody {
 		t.Fatalf("unexpected mutated JSON body: %s", got.Body)
+	}
+}
+
+func TestReplaceJSONValueDoesNotUseInvalidNumericSentinel(t *testing.T) {
+	body := `{"parent_order_id":-1,"other_id":-1}`
+	got := replaceBodyObject(body, "alice123", "99")
+	if got != body {
+		t.Fatalf("unexpected mutation for non-numeric object: %s", got)
+	}
+}
+
+func TestDiscoverObjectsDoesNotCaptureJWT(t *testing.T) {
+	token := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.signature"
+	refs := DiscoverObjects("https://api.example.test/session", `{"token":"`+token+`"}`, nil)
+	for _, ref := range refs {
+		if ref.Value == token || ref.Kind == "jwt" || strings.Contains(ref.Value, token) {
+			t.Fatalf("captured JWT was retained as an object reference")
+		}
 	}
 }
