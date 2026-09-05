@@ -125,7 +125,9 @@ func Run(items []BurpItem, cfg Config, opt Options) (Result, error) {
 			if err := writeJSON(opt.BaselinePath, b); err != nil {
 				return Result{}, err
 			}
-		} else if statErr == nil {
+		} else if statErr != nil {
+			return Result{}, statErr
+		} else {
 			old, err := LoadBaseline(opt.BaselinePath)
 			if err != nil {
 				return Result{}, err
@@ -313,6 +315,18 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		if isMutating(tc.Method) && !opt.AllowMutations {
 			continue
 		}
+
+		var beforeFP ResponseFingerprint
+		var beforeBody string
+		haveBefore := false
+		if opt.VerifySideEffects && opt.AllowMutations && opt.ExecuteTests && isMutating(tc.Method) {
+			before := mutated
+			before.Method = http.MethodGet
+			var beforeErr error
+			beforeFP, beforeBody, _, beforeErr = client.Do(applyActor(withGlobalHeaders(before, cfg.GlobalHeaders), tc.TargetActor))
+			haveBefore = beforeErr == nil
+		}
+
 		fp, body, _, err := client.Do(applyActor(withGlobalHeaders(mutated, cfg.GlobalHeaders), tc.TargetActor))
 		if err != nil {
 			continue
@@ -374,7 +388,11 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 		chain = append(chain, fmt.Sprintf("%s → replays owner's object %s → %s", tc.TargetActor.Name, tc.SourceObject, map[bool]string{true: "authorization bypass VERIFIED", false: "suspicious access"}[verified]))
 		f := Finding{ID: newID(), Type: typ, Severity: sev, Confidence: clampPercent(conf + similarityBonus(sim)), Verified: verified, Title: map[bool]string{true: "Verified unauthorized object access", false: "Potential authorization boundary weakness"}[verified], Summary: fmt.Sprintf("%s accessed object %s using an authorization context associated with %s.", tc.TargetActor.Name, tc.SourceObject, tc.SourceActor.Name), URL: tc.URL, Endpoint: tc.Endpoint, Method: tc.Method, SourceActor: tc.SourceActor, TargetActor: tc.TargetActor, SourceObject: tc.SourceObject, MutatedObject: probeValue, Evidence: evidence, ExploitChain: chain, Recommendations: []string{"Enforce object ownership checks at the service/data layer", "Enforce tenant isolation before reads and writes", "Keep this exact actor/object relationship in authorization regression coverage"}, TestCaseID: tc.ID}
 		if opt.VerifySideEffects && opt.AllowMutations && opt.ExecuteTests && verified && isMutating(tc.Method) {
-			f.SideEffect = verifySideEffect(client, mutated, tc.TargetActor, cfg)
+			if haveBefore {
+				f.SideEffect = verifySideEffect(client, mutated, tc.TargetActor, cfg, beforeFP, beforeBody, fp)
+			} else {
+				f.SideEffect.Attempted = true
+			}
 			if f.SideEffect.Verified {
 				f.Confidence = clampPercent(f.Confidence + 2)
 			}
@@ -384,25 +402,12 @@ func executeTestCases(tests []TestCase, prepared []preparedRequest, access map[s
 	return dedupeFindings(findings)
 }
 
-func verifySideEffect(client Client, r Request, actor Actor, cfg Config) SideEffectEvidence {
-	ev := SideEffectEvidence{Attempted: true}
-	before := r
-	before.Method = http.MethodGet
-	beforeFP, beforeBody, _, e1 := client.Do(applyActor(withGlobalHeaders(before, cfg.GlobalHeaders), actor))
-	if e1 != nil {
-		return ev
-	}
-	ev.BeforeStatus = beforeFP.Status
-	ev.BeforeHash = beforeFP.BodyHash
-	ev.VerificationURL = before.URL
-	mutFP, _, _, e2 := client.Do(applyActor(withGlobalHeaders(r, cfg.GlobalHeaders), actor))
-	if e2 != nil {
-		return ev
-	}
+func verifySideEffect(client Client, r Request, actor Actor, cfg Config, beforeFP ResponseFingerprint, beforeBody string, mutFP ResponseFingerprint) SideEffectEvidence {
+	ev := SideEffectEvidence{Attempted: true, BeforeStatus: beforeFP.Status, BeforeHash: beforeFP.BodyHash, VerificationURL: r.URL}
 	after := r
 	after.Method = http.MethodGet
-	afterFP, afterBody, _, e3 := client.Do(applyActor(withGlobalHeaders(after, cfg.GlobalHeaders), actor))
-	if e3 != nil {
+	afterFP, afterBody, _, e := client.Do(applyActor(withGlobalHeaders(after, cfg.GlobalHeaders), actor))
+	if e != nil {
 		return ev
 	}
 	ev.AfterStatus = afterFP.Status
@@ -435,7 +440,13 @@ func findPrepared(prepared []preparedRequest, endpoint, urlStr, method string) (
 }
 
 func findReferenceAccess(tc TestCase, access map[string]accessRecord, actor Actor, endpoint, object string) (accessRecord, bool) {
-	for k, v := range access {
+	keys := make([]string, 0, len(access))
+	for k := range access {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := access[k]
 		if !strings.HasPrefix(k, actor.Name+"|"+endpoint+"|") {
 			continue
 		}
@@ -593,20 +604,14 @@ func replaceValue(r Request, from, to string) Request {
 	if u, err := url.Parse(r.URL); err == nil {
 		if u.Path != "" {
 			parts := strings.Split(u.Path, "/")
-			replaced := false
 			for i, part := range parts {
 				if part == from {
 					parts[i] = to
-					replaced = true
-					break
 				}
 			}
-			if replaced {
-				u.Path = strings.Join(parts, "/")
-				u.RawPath = ""
-				r.URL = u.String()
-				return r
-			}
+			u.Path = strings.Join(parts, "/")
+			u.RawPath = ""
+			r.URL = u.String()
 		}
 		values := u.Query()
 		queryReplaced := false
@@ -614,27 +619,25 @@ func replaceValue(r Request, from, to string) Request {
 			if !isObjectParameter(key) {
 				continue
 			}
+			changed := false
 			for i, value := range vals {
 				if value == from {
 					vals[i] = to
-					queryReplaced = true
-					break
+					changed = true
 				}
 			}
-			if queryReplaced {
+			if changed {
+				queryReplaced = true
 				values[key] = vals
-				break
 			}
 		}
 		if queryReplaced {
 			u.RawQuery = values.Encode()
 			r.URL = u.String()
-			return r
 		}
 	}
 	if replaced := replaceBodyObject(r.Body, from, to); replaced != r.Body {
 		r.Body = replaced
-		return r
 	}
 	return r
 }
@@ -700,10 +703,12 @@ func replaceJSONValue(v any, from, to string) (any, bool) {
 						continue
 					}
 				case float64:
-					if candidate == float64(parseNumeric(from)) {
-						x[key] = parseNumeric(to)
-						changed = true
-						continue
+					if parsedFrom, ok := parseNumeric(from); ok && candidate == parsedFrom {
+						if parsedTo, ok := parseNumeric(to); ok {
+							x[key] = parsedTo
+							changed = true
+							continue
+						}
 					}
 				}
 			}
@@ -729,18 +734,19 @@ func replaceJSONValue(v any, from, to string) (any, bool) {
 	}
 }
 
-func parseNumeric(s string) float64 {
+func parseNumeric(s string) (float64, bool) {
+	if s == "" {
+		return 0, false
+	}
 	n := 0.0
 	for _, r := range s {
 		if r < '0' || r > '9' {
-			return -1
+			return 0, false
 		}
 		n = n*10 + float64(r-'0')
 	}
-	return n
+	return n, true
 }
-
-func replaceInURL(u, from, to string) string { return strings.ReplaceAll(u, from, to) }
 
 func mimeAllowed(m string, filters []string) bool {
 	if len(filters) == 0 {
