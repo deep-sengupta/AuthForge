@@ -63,6 +63,15 @@ func main() {
 	if verbose {
 		log.Printf("Loaded %d Burp requests and %d configured actors\n", len(items), len(cfg.Actors))
 	}
+	if !execute && cfg.ExecuteTests {
+		log.Printf("WARNING: live execution enabled by config: executeTests=true")
+	}
+	if !allowMutations && cfg.AllowMutations {
+		log.Printf("WARNING: mutating probes enabled by config: allowMutations=true")
+	}
+	if !verifySideEffects && cfg.VerifySideEffects {
+		log.Printf("WARNING: side-effect verification enabled by config: verifySideEffects=true")
+	}
 	result, err := engine.Run(items, cfg, engine.Options{Proxy: proxy, Threads: threads, Timeout: timeout, InsecureTLS: insecure, VerifySideEffects: verifySideEffects || cfg.VerifySideEffects, BaselinePath: baseline, ReportPath: htmlOut, JSONPath: jsonOut, CustomPatterns: custom, MaxMutations: maxMutations, ExecuteTests: execute || cfg.ExecuteTests, AllowMutations: allowMutations || cfg.AllowMutations})
 	if err != nil {
 		log.Fatal(err)
